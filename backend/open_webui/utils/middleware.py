@@ -3686,6 +3686,7 @@ async def streaming_chat_response_handler(response, ctx):
 
                                                 if current_response_tool_call is None:
                                                     # Add the new tool call
+                                                    delta_tool_call.setdefault('id', f'call_{uuid4().hex[:24]}')
                                                     delta_tool_call.setdefault('function', {})
                                                     delta_tool_call['function'].setdefault('name', '')
                                                     delta_tool_call['function'].setdefault('arguments', '')
@@ -4214,7 +4215,7 @@ async def streaming_chat_response_handler(response, ctx):
                         results.append(
                             {
                                 'tool_call_id': tool_call_id,
-                                'content': str(tool_result) if tool_result else '',
+                                'content': str(tool_result) if tool_result else '(no output)',
                                 **({'files': tool_result_files} if tool_result_files else {}),
                                 **({'embeds': tool_result_embeds} if tool_result_embeds else {}),
                             }

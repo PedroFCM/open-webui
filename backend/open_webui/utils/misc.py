@@ -152,10 +152,11 @@ def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
     def flush_pending():
         nonlocal pending_content, pending_tool_calls
         if pending_content or pending_tool_calls:
+            content = '\n'.join(pending_content) if pending_content else (None if pending_tool_calls else '')
             messages.append(
                 {
                     'role': 'assistant',
-                    'content': '\n'.join(pending_content) if pending_content else '',
+                    'content': content,
                     **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
                 }
             )

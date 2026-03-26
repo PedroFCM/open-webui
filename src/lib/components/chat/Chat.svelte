@@ -1834,9 +1834,10 @@
 			const currentMessage = history.messages[history.currentId];
 
 			if (currentMessage.error && !currentMessage.content) {
-				// Error in response
-				toast.error($i18n.t(`Oops! There was an error in the previous response.`));
-				return;
+				// Clear the error so the user can continue the conversation
+				currentMessage.done = true;
+				currentMessage.error = null;
+				history.messages[history.currentId] = currentMessage;
 			}
 		}
 
