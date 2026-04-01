@@ -2383,7 +2383,12 @@ async def oauth_client_authorize(
     client = oauth_client_manager.get_client(client_id)
     client_info = oauth_client_manager.get_client_info(client_id)
     if client is None or client_info is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND)
+        # Client not in memory or config — attempt dynamic re-registration
+        if await register_client(request, client_id):
+            client = oauth_client_manager.get_client(client_id)
+            client_info = oauth_client_manager.get_client_info(client_id)
+        if client is None or client_info is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
 
     if not await oauth_client_manager._preflight_authorization_url(client, client_info):
         log.info(
