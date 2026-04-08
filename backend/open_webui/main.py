@@ -1739,12 +1739,9 @@ async def chat_completion(
                 'stream_delta_chunk_size': stream_delta_chunk_size,
                 'reasoning_tags': reasoning_tags,
                 'function_calling': (
-                    'native'
-                    if (
-                        form_data.get('params', {}).get('function_calling') == 'native'
-                        or model_info_params.get('function_calling') == 'native'
-                    )
-                    else 'default'
+                    form_data.get('params', {}).get('function_calling')
+                    or model_info_params.get('function_calling')
+                    or 'default'
                 ),
             },
         }
@@ -1794,7 +1791,73 @@ async def chat_completion(
         try:
             form_data, metadata, events = await process_chat_payload(request, form_data, user, metadata, model)
 
-            response = await chat_completion_handler(request, form_data, user)
+            # Native tool-calling loop for REST API (no WebSocket session).
+            # Executes tools server-side and re-invokes the LLM until
+            # finish_reason != 'tool_calls' or max retries reached.
+            is_api_native = (
+                not metadata.get('session_id')
+                and metadata.get('params', {}).get('function_calling') == 'native'
+                and metadata.get('tools')
+            )
+
+            if is_api_native:
+                from open_webui.env import CHAT_RESPONSE_MAX_TOOL_CALL_RETRIES
+
+                original_stream = form_data.get('stream', False)
+                form_data['stream'] = False
+                tools = metadata.get('tools', {})
+
+                pending_tool_results = False
+                for _ in range(CHAT_RESPONSE_MAX_TOOL_CALL_RETRIES):
+                    pending_tool_results = False
+                    response = await chat_completion_handler(request, form_data, user)
+
+                    data = response.body if isinstance(response, JSONResponse) else response
+                    if isinstance(data, bytes):
+                        data = json.loads(data)
+                    if not isinstance(data, dict):
+                        break
+
+                    choice = (data.get('choices') or [{}])[0]
+                    if choice.get('finish_reason') != 'tool_calls':
+                        break
+
+                    tool_calls = (choice.get('message') or {}).get('tool_calls') or []
+                    if not tool_calls:
+                        break
+
+                    # Append assistant message with tool_calls, then each tool result.
+                    form_data['messages'].append(choice['message'])
+                    for tc in tool_calls:
+                        func = tc.get('function', {})
+                        name = func.get('name', '')
+                        try:
+                            args = json.loads(func.get('arguments', '{}'))
+                        except json.JSONDecodeError:
+                            args = {}
+
+                        result = None
+                        callable_tool = tools.get(name, {}).get('callable')
+                        if callable_tool:
+                            try:
+                                result = await callable_tool(**args)
+                            except Exception as e:
+                                result = str(e)
+
+                        form_data['messages'].append({
+                            'role': 'tool',
+                            'tool_call_id': tc.get('id', ''),
+                            'content': str(result) if result is not None else '',
+                        })
+                    pending_tool_results = True
+
+                form_data['stream'] = original_stream
+                # Re-invoke if tool results are pending (LLM hasn't seen them)
+                # or if the caller requested streaming (loop response is JSON).
+                if pending_tool_results or original_stream:
+                    response = await chat_completion_handler(request, form_data, user)
+            else:
+                response = await chat_completion_handler(request, form_data, user)
             if metadata.get('chat_id') and metadata.get('message_id'):
                 try:
                     if not metadata['chat_id'].startswith('local:'):
